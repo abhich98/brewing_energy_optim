@@ -18,7 +18,9 @@ Develop and evaluate a forecasting-based optimisation framework that schedules f
 
 Fermentation-tank cooling is a critical part of beer maturation (lagering), where beer is cooled after primary fermentation to promote yeast sedimentation, improve colloidal stability and refine flavour. Residual yeast converts diacetyl, formed via the α-acetolactate pathway, into less flavour-active compounds such as acetoin and 2,3-butanediol. Cooling also supports the precipitation of haze-forming protein–polyphenol complexes and natural carbonation during conditioning [2].
 
-At Veltins, the thesis examines the main cooling phase (a phase in/after the beer maturation process) from **14.5°C to 2°C**, averaging **107 hours**. GT01 (a single fermentation tank) consumed **38,805 kWh** across its 2022 cooling cycles. Optimisation reduced energy use by only **1.1%**, but electricity costs by **12.7–14.5%** [1].
+At Veltins, the thesis examines the main cooling phase (a phase in/after the beer maturation process represented in red with numerical label I in the image below) from **14.5°C to 2°C**, averaging **107 hours**. GT01 (a single fermentation tank) consumed **38,805 kWh** across its 2022 cooling cycles. Optimisation reduced energy use by only **1.1%**, but electricity costs by **12.7–14.5%** [1].
+
+![Veltins tank temperature profile](docs/Adrian_translated_fig_7_3.jpg)
 
 Literature estimates that fermentation and maturation account for **60–70% of a brewery's refrigeration capacity** [Needs citation]. (**Important:** This 60–70% figure refers to refrigeration capacity, not total brewery energy consumption.)
 

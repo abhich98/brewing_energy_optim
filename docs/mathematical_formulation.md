@@ -60,22 +60,12 @@ For the initial optimisation model:
 The general energy balance for the tank is:
 
 $$
-\frac{dU}{dt}
-=
-\dot Q_{\mathrm{ambient}}
--
-\dot Q_{\mathrm{cooling}}
+\frac{dU}{dt} = \dot Q_{\mathrm{ambient}} - \dot Q_{\mathrm{cooling}}
 $$
 
 For a simplified well-mixed tank with constant mass and specific heat capacity:
 
-$$
-Mc_p\frac{dT}{dt}
-=
-\dot Q_{\mathrm{ambient}}
--
-u(t)\dot Q_{\mathrm{cool}}(T)
-$$
+$$ Mc_p\frac{dT}{dt} = \dot Q_{\mathrm{ambient}} - u(t)\dot Q_{\mathrm{cool}}(T) $$
 
 where:
 
