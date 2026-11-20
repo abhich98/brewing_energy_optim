@@ -143,11 +143,7 @@ $$
 Therefore:
 
 $$
-\boxed{
-\dot Q_{\mathrm{cool}}(T)
-=
-16450T^{1.33}-4603
-}
+\boxed{\dot Q_{\mathrm{cool}}(T) = 16450T^{1.33}-4603}
 $$
 
 where:
@@ -167,15 +163,7 @@ For optimisation, the thermal model is discretised into hourly time steps.
 Using a forward Euler approximation:
 
 $$
-T_{t+1}
-=
-T_t+
-\frac{\Delta t_s}{Mc_p}
-\left[
-\dot Q_{\mathrm{ambient},t}
--
-u_t\dot Q_{\mathrm{cool}}(T_t)
-\right]
+T_{t+1} = T_t + \frac{\Delta t_s}{Mc_p} \left[ \dot Q_{\mathrm{ambient},t} - u_t\dot Q_{\mathrm{cool}}(T_t) \right]
 $$
 
 where $\Delta t_s$ is the time step in seconds.
@@ -189,13 +177,7 @@ $$
 With ambient heat gains neglected:
 
 $$
-\boxed{
-T_{t+1}
-=
-T_t-
-\frac{3600}{Mc_p}
-u_t\dot Q_{\mathrm{cool}}(T_t)
-}
+\boxed{ T_{t+1} = T_t - \frac{3600}{Mc_p} u_t\dot Q_{\mathrm{cool}}(T_t) }
 $$
 
 This is a proposed reduced-order discrete-time model derived from the dissertation's thermal modelling principles. It is not an equation copied verbatim from the dissertation.
@@ -215,18 +197,13 @@ $$
 The electrical power required to provide the cooling capacity is:
 
 $$
-P_{\mathrm{electric}}=
-\frac{\dot Q_{\mathrm{cool}}}{\mathrm{EER}}
+P_{\mathrm{electric}} = \frac{\dot Q_{\mathrm{cool}}}{\mathrm{EER}}
 $$
 
 Since the cooling capacity is expressed in watts, electrical power in kilowatts is:
 
 $$
-\boxed{
-P_t=
-\frac{u_t\dot Q_{\mathrm{cool}}(T_t)}
-{1000\times4.35}
-}
+\boxed{ P_t = \frac{u_t\dot Q_{\mathrm{cool}}(T_t)} {1000\times4.35} }
 $$
 
 where $P_t$ is in kW.
@@ -242,23 +219,12 @@ Let:
 The electricity cost over one cooling cycle is:
 
 $$
-\boxed{
-C=
-\sum_{t=0}^{N-1}p_tP_t\Delta t_h
-}
+\boxed{ C= \sum_{t=0}^{N-1}p_tP_t\Delta t_h }
 $$
 
 Substituting the electrical power equation:
 
-$$
-\boxed{
-C=
-\sum_{t=0}^{N-1}
-p_t
-\frac{u_t\dot Q_{\mathrm{cool}}(T_t)}
-{1000\times4.35}
-\Delta t_h
-}
+$$ \boxed{ C = \sum_{t=0}^{N-1}p_t \frac{u_t\dot Q_{\mathrm{cool}}(T_t)} {1000\times4.35} \Delta t_h }
 $$
 
 The optimisation objective is to minimise electricity cost rather than necessarily minimise electricity consumption.
@@ -282,12 +248,8 @@ For each cooling cycle $j$, define:
 
 The dissertation defines the optimisation deadline as:
 
-$$
-\boxed{
-t_j^{\mathrm{deadline}}
-=
-t_j^{\mathrm{ref,end}}+D_j
-}
+$$ 
+\boxed{ t_j^{\mathrm{deadline}} = t_j^{\mathrm{ref,end}}+D_j }
 $$
 
 The usable production pause is cycle-specific. Its reported average is 33 hours, with a range of 0–149 hours.
@@ -296,10 +258,8 @@ The usable production pause is cycle-specific. Its reported average is 33 hours,
 
 At the start of each cooling cycle:
 
-$$
-\boxed{
-T_{t_j^{\mathrm{start}}}=14.5
-}
+$$ 
+\boxed{ T_{t_j^{\mathrm{start}}}=14.5 }
 $$
 
 ### 4.2 Temperature limits
@@ -307,9 +267,7 @@ $$
 During the main cooling phase:
 
 $$
-\boxed{
-2\leq T_t\leq14.5
-}
+\boxed{2\leq T_t\leq14.5}
 $$
 
 ### 4.3 Deadline constraint
@@ -317,9 +275,7 @@ $$
 The target temperature must be reached by the deadline:
 
 $$
-\boxed{
-T_{t_j^{\mathrm{deadline}}}\leq2
-}
+\boxed{ T_{t_j^{\mathrm{deadline}}}\leq2 }
 $$
 
 Together with the lower temperature bound, this means the terminal temperature is exactly 2°C.
@@ -372,9 +328,7 @@ The proposed contribution is to replace the rule-based scheduling decision with 
 The challenge is that the cooling-capacity function is nonlinear:
 
 $$
-\dot Q_{\mathrm{cool}}(T)
-=
-16450T^{1.33}-4603
+\dot Q_{\mathrm{cool}}(T) = 16450T^{1.33}-4603
 $$
 
 A conventional MILP cannot directly represent this nonlinear function. We therefore approximate it using a piecewise-linear formulation.
@@ -500,12 +454,7 @@ where:
 With ambient heat gains neglected:
 
 $$
-\boxed{
-T_{t+1}
-=
-T_t-
-\frac{\Delta t_s}{Mc_p}v_t
-}
+\boxed{ T_{t+1} = T_t - \frac{\Delta t_s}{Mc_p}v_t }
 $$
 
 **Cooling control**
