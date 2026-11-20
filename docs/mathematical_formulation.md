@@ -16,7 +16,7 @@ The formulation is based on Adrian von Hayn's 2025 dissertation. It distinguishe
 ### 1.1 System parameters
 
 | Parameter | Symbol | Value |
-|||:|
+|---|---|---:|
 | Tank volume | $V_{\mathrm{GT}}$ | $460\mathrm{m^3}$ |
 | Tank height | $h_{\mathrm{GT}}$ | $22.75\mathrm m$ |
 | Beer density | $\rho_{\mathrm{beer}}$ | $1040\mathrm{kg/m^3}$ |
@@ -80,7 +80,7 @@ $$
 where:
 
 | Variable | Description | Unit |
-||||
+|---|---|---|
 | $U$ | Internal energy of the beer | J |
 | $M$ | Mass of beer | kg |
 | $c_p$ | Specific heat capacity | J/(kg K) |
@@ -274,7 +274,7 @@ The cooling process must reach the target temperature before the production dead
 For each cooling cycle $j$, define:
 
 | Variable | Description |
-|||
+|---|---|
 | $t_j^{\mathrm{start}}$ | Start of the main cooling phase |
 | $t_j^{\mathrm{ref,end}}$ | Reference end time under continuous cooling |
 | $D_j$ | Usable production pause after the reference cooling process |
@@ -587,7 +587,7 @@ Here, $p_{\tau|t}$ represents the forecast electricity price for time $\tau$, ge
 It is important to distinguish three different horizons:
 
 | Concept | Meaning | Proposed experiments |
-||||
+|---|---|---|
 | Forecast horizon | How far ahead electricity prices are predicted | 24, 48, 72, 96, 168 h |
 | Optimisation horizon | How far ahead cooling is scheduled | Remaining time until the cycle deadline |
 | Re-optimisation interval | How often the controller updates | Initially 1 h |
@@ -617,7 +617,7 @@ The same thermal model, production constraints and price information should be u
 The project should evaluate the controllers using the following metrics:
 
 | Metric | Purpose |
-|||
+|---|---|
 | Total electricity cost (€) | Primary optimisation objective |
 | Electricity consumption (kWh) | Quantifies energy use |
 | Cost reduction (%) | Measures economic improvement |
@@ -660,7 +660,7 @@ Before implementing the optimisation, the following tasks should be completed:
 Adrian von Hayn (2025), *Regelbasierte Energiekostenoptimierung industrieller Kälteversorgungssysteme durch Reaktion auf volatile Strompreise am Beispiel des Brauprozesses*, Technische Universität Darmstadt.
 
 | Topic | Dissertation section | Printed pages / equations |
-||||
+|---|---|---|
 | RBMPC methodology | Chapter 5 | Sections 5.2–5.4 |
 | Thermal energy balance | Chapter 5 | Equation 5-5 |
 | Fermentation-tank model | Section 7.1.3.1 | Pages 144–145 |
