@@ -1,0 +1,20 @@
+[project]
+name = "beerbuddy"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "<3.12,>=3.11"
+dependencies = [
+    "eta-utility[eta-x]>=3.3.1",
+    "marshmallow<4",
+    "polars>=0.20.10,<1",
+    "torch==2.0.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

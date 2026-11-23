@@ -76,6 +76,16 @@ Cost savings, cooling energy consumption, deadline compliance, temperature const
 - **Simulation and modelling:** Custom Python scripts based on thesis parameters [1]
 - Other python packages as required.
 
+### 5. Practical aspects and potential drawbacks
+
+- For one tank, the available flexibility appears small. If cooling needs 37–45 hours continuously within a 40–70 hour window, there are only 3–33 hours to move (see image below). When the RBMPC already selects the cheapest hours while enforcing daily progress, it may be close to the attainable optimum. An MILP cannot create more flexibility or better price information.
+
+![Reference vs Optimized Durations](docs/ref_vs_opt_durations.png)
+
+- An important aspect is to understand that it is not enough to just identify the cheapest hours for cooling; **one must identify the cheapest energy consumption hours**. These are different because cooling capacity does not change linearly with temperature; what this means is that it is ideal to find the cheapest hours for cooling at higher temperature levels (towards the start when the tank is warmer i.e, ~14–15°C) compared to lower temperature levels (towards the end when the tank is colder i.e, ~4–5°C).
+
+> I should, maybe, frame the project as an empirical question rather than presume MILP wins: under what flexibility, forecast accuracy, and system-complexity conditions does MILP MPC materially outperform RBMPC? I want to start by testing a minimum availability of 3 days (72-hour) for the fermentation tank cooling.
+
 # References
 
 1. Adrian von Hayn, 2025. Dissertation: .
