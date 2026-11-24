@@ -1,0 +1,21 @@
+{
+    "temperature_initial_k": 287.65,
+    "temperature_min_k": 275.15,
+    "temperature_max_k": 287.65,
+    "terminal_tolerance_k": 0.05,
+    "tank_volume_m3": 460,
+    "beer_density_kg_m3": 1040,
+    "beer_heat_capacity_j_kg_k": 3770,
+    "eer": 4.35,
+    "step_hours": 1,
+    "temperature_breakpoints_k": [275.15, 276.15, 277.15, 278.15, 279.15, 281.15, 283.15, 285.15, 287.65],
+    "prices_eur_per_kwh": [
+        0.20, 0.19, 0.18, 0.17, 0.16, 0.15,
+        0.14, 0.16, 0.18, 0.20, 0.22, 0.24,
+        0.26, 0.25, 0.23, 0.21, 0.19, 0.17,
+        0.15, 0.14, 0.13, 0.14, 0.16, 0.18,
+        0.20, 0.19, 0.18, 0.17, 0.16, 0.15,
+        0.14, 0.16, 0.18, 0.20, 0.22, 0.24
+    ],
+    "solver": "scip"
+}
