@@ -15,7 +15,7 @@ from eta_utility.eta_x.envs import BaseEnvSim, StateConfig, StateVar
 
 class Gartank(BaseEnvSim):
     version = "v1.0"
-    description = "Gärtank FMU reference cooling cycle"
+    description = "Gärtank FMU cooling cycle"
     fmu_name = "Veltins_Gartank_FMU"
 
     def __init__(

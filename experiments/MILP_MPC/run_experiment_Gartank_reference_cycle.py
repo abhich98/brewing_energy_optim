@@ -12,10 +12,10 @@ def main() -> None:
     get_logger()
     experiment = ETAx(
         root_path=Path(__file__).resolve().parent,
-        config_name="sample_one_cycle.json",
+        config_name="reference_cycle.json",
         relpath_config="config",
     )
-    experiment.play("gartank_reference", "cycle1")
+    experiment.play("gartank", "reference_cycle")
     print(f"Elapsed: {perf_counter() - start:.2f} seconds")
 
 

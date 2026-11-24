@@ -6,12 +6,12 @@
         "norm_wrapper_reward": false
     },
     "paths": {
-        "relpath_scenarios": "../../../rule-based-operation-strategy/experiments/rule-based-optimization/data",
+        "relpath_scenarios": "/media/cheeko/6E92406092402EC1/Abhilash/github/rule-based-operation-strategy/experiments/rule-based-optimization/data",
         "relpath_results": "results"
     },
     "settings": {
         "sampling_time": 300,
-        "episode_duration": 125100, // in seconds
+        "episode_duration": 125100,
         "n_episodes_play": 1,
         "n_environments": 1,
         "plot_interval": 100,
