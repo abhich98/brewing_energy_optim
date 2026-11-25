@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from logging import getLogger
 from typing import Any, Callable, Mapping
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from eta_utility import timeseries
 from eta_utility.eta_x import ConfigOptRun
 from eta_utility.eta_x.envs import BaseEnvSim, StateConfig, StateVar
+
+log = getLogger(__name__)
 
 
 class Gartank(BaseEnvSim):
@@ -36,6 +40,8 @@ class Gartank(BaseEnvSim):
         h_Gaertank: float,
         ambient_file: str,
         price_file: str,
+        stop_at_target: bool = False,
+        plot_results: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -65,6 +71,8 @@ class Gartank(BaseEnvSim):
 
         self.min_temp_storage = min_temp_storage
         self.max_temp_storage = max_temp_storage
+        self.stop_at_target = stop_at_target
+        self.plot_results = plot_results
         self.state_config = StateConfig(
             StateVar("input_cooling_on", is_agent_action=True, is_ext_input=True,
                      is_ext_output=True, low_value=0, high_value=1),
@@ -94,18 +102,20 @@ class Gartank(BaseEnvSim):
 
         prices = pd.read_csv(self.path_scenarios / price_file, parse_dates=["datetime"])
         prices = prices.set_index("datetime")["ENTSOE-DEU-LUX_Price"]
-        price_hours = expected[:-1].floor("h")
+        price_hours = expected.floor("h")
         prices = prices.loc[(prices.index >= price_hours[0]) & (prices.index <= price_hours[-1])]
         if not prices.index.is_unique or not prices.index.is_monotonic_increasing:
             raise ValueError("Price timestamps within the episode must be unique and ordered.")
-        self.prices = prices.reindex(price_hours).to_numpy(dtype=float) / 1000
-        if not np.isfinite(self.prices).all():
-            raise ValueError("Historical prices must cover every simulation interval with finite values.")
+        self.prices_EUR_per_kWh = prices.reindex(price_hours).to_numpy(dtype=float) / 1000
+        if not np.isfinite(self.prices_EUR_per_kWh).all():
+            raise ValueError("Historical prices must cover every simulation timestamp with finite values.")
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[np.ndarray, dict[str, Any]]:
         self.additional_state = {}
+        self._episode_finished = False
+        self.controller_metadata: dict[str, Any] = {}
         observations, info = super().reset(seed=seed, options=options)
         self.records: list[dict[str, Any]] = []
         self._rendered = False
@@ -116,9 +126,12 @@ class Gartank(BaseEnvSim):
             "cooling_on": None,
             "cooling_power_W": self.state["cooling_power"],
             "power_chiller_W": self.state["power_chiller"],
-            "price_EUR_per_kWh": None,
-            "energy_kWh": 0.0,
+            "price_EUR_per_kWh": self.prices_EUR_per_kWh[0],
+            "energy_J": 0.0,
             "cost_EUR": 0.0,
+            "controller_status": None,
+            "predicted_temperature_next_K": None,
+            "predicted_ambient_temperature_K": None,
         })
         return observations, info
 
@@ -131,35 +144,43 @@ class Gartank(BaseEnvSim):
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         if action.shape != (1,) or action[0] not in (0, 1):
             raise ValueError(f"Cooling action must be 0 or 1, got {action}.")
-        ambient_input = self.state["ambient_temp"]
         self.additional_state = {}
         observations, reward, terminated, truncated, info = super().step(action)
         if terminated and self.n_steps < self.n_episode_steps:
             raise RuntimeError(f"FMU simulation failed at step {self.n_steps}.")
-        power = self.state["power_chiller"]
-        if not np.isfinite(observations).all() or not np.isfinite(power):
+        power_W = self.state["power_chiller"]
+        if not np.isfinite(observations).all() or not np.isfinite(power_W):
             raise ValueError(f"FMU returned non-finite values at step {self.n_steps}.")
-        energy = power * self.sampling_time / 3_600_000
-        price = self.prices[self.n_steps - 1]
+        energy_J = power_W * self.sampling_time
+        price_EUR_per_kWh = self.prices_EUR_per_kWh[self.n_steps]
         self.records.append({
             "timestamp": self.scenario_time_begin + timedelta(seconds=self.n_steps * self.sampling_time),
             "storage_temperature_K": self.state["storage_temperature"],
-            "ambient_temperature_K": ambient_input,
+            "ambient_temperature_K": self.state["ambient_temp"],
             "cooling_on": int(action[0]),
             "cooling_power_W": self.state["cooling_power"],
-            "power_chiller_W": power,
-            "price_EUR_per_kWh": price,
-            "energy_kWh": energy,
-            "cost_EUR": energy * price,
+            "power_chiller_W": power_W,
+            "price_EUR_per_kWh": price_EUR_per_kWh,
+            "energy_J": energy_J,
+            "cost_EUR": energy_J / 3_600_000 * price_EUR_per_kWh,
+            "controller_status": self.controller_metadata.get("status"),
+            "predicted_temperature_next_K": self.controller_metadata.get("predicted_temperature_next_K"),
+            "predicted_ambient_temperature_K": self.controller_metadata.get("predicted_ambient_temperature_K"),
         })
+        if self.stop_at_target and self.state["storage_temperature"] <= self.min_temp_storage:
+            terminated = True
+            info["completion_reason"] = "target_reached"
+        elif terminated or truncated:
+            info["completion_reason"] = "deadline"
         if terminated or truncated:
+            self._episode_finished = True
             self.render()
         return observations, reward, terminated, truncated, info
 
     def render(self) -> None:
         if getattr(self, "_rendered", False) or not getattr(self, "records", None):
             return
-        if self.n_steps != self.n_episode_steps:
+        if not getattr(self, "_episode_finished", False):
             return
         result = pd.DataFrame(self.records)
         path = Path(self.path_results) / f"{self.run_name}_trajectory.csv"
@@ -169,10 +190,60 @@ class Gartank(BaseEnvSim):
                       index=False
                       )
         reached = result[result["storage_temperature_K"] <= self.min_temp_storage]
-        print(f"Trajectory: {path}")
-        print(f"Energy: {result['energy_kWh'].sum():.3f} kWh; cost: {result['cost_EUR'].sum():.2f} EUR")
-        print(f"First target crossing: {reached['timestamp'].iloc[0] if not reached.empty else 'not reached'}")
+        log.info("Trajectory: %s", path)
+        log.info(
+            "Energy: %.3f kWh; cost: %.2f EUR",
+            result["energy_J"].sum() / 3_600_000,
+            result["cost_EUR"].sum(),
+        )
+        log.info(
+            "First target crossing: %s",
+            reached["timestamp"].iloc[0] if not reached.empty else "not reached",
+        )
+        if self.plot_results:
+            self.render_plot(result)
         self._rendered = True
+
+    def render_plot(self, result: pd.DataFrame) -> None:
+        """Plot measured episode data in the style of the original RBMPC report."""
+        time = result["timestamp"]
+        fig, axes = plt.subplots(
+            6, 1, sharex=True, figsize=(16, 18),
+            gridspec_kw={"height_ratios": [0.45, 1, 1, 1, 1, 1]},
+            constrained_layout=True,
+        )
+        axes[0].step(time, result["cooling_on"], where="pre", color="firebrick", label="Cooling on")
+        axes[0].set_yticks([0, 1])
+        axes[0].set_ylabel("Action")
+        axes[1].plot(time, result["ambient_temperature_K"] - 273.15, label="Ambient")
+        if result["predicted_ambient_temperature_K"].notna().any():
+            axes[1].plot(time, result["predicted_ambient_temperature_K"] - 273.15,
+                         linestyle="--", label="Ambient estimate")
+        axes[1].set_ylabel("Ambient [°C]")
+        axes[2].plot(time, result["storage_temperature_K"] - 273.15, label="Tank")
+        axes[2].axhline(self.min_temp_storage - 273.15, linestyle="--", color="green", label="Target")
+        axes[2].set_ylabel("Tank [°C]")
+        axes[3].plot(time, result["cooling_power_W"] / 1000, label="Thermal cooling")
+        axes[3].plot(time, result["power_chiller_W"] / 1000, label="Chiller electrical")
+        axes[3].set_ylabel("Power [kW]")
+        axes[4].step(time, result["price_EUR_per_kWh"] * 1000, where="post", label="Electricity price")
+        axes[4].set_ylabel("Price [€/MWh]")
+        power_axis = axes[4].twinx()
+        power_axis.plot(time, result["power_chiller_W"] / 1000, color="darkorange", label="Chiller electrical")
+        power_axis.set_ylabel("Power [kW]")
+        axes[5].plot(time, result["cost_EUR"].cumsum(), label="Cumulative cost")
+        axes[5].set_ylabel("Cost [€]")
+        axes[5].set_xlabel("Time")
+        for axis in axes:
+            axis.grid(alpha=0.25)
+            axis.legend(loc="upper left")
+        power_axis.legend(loc="upper right")
+        fig.suptitle("Gärtank cooling episode")
+        fig.autofmt_xdate()
+        path = Path(self.path_results) / f"{self.run_name}_plot.png"
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        log.info("Plot: %s", path)
 
     def close(self) -> None:
         if hasattr(self, "simulator"):

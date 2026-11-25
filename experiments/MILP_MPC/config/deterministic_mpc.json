@@ -1,0 +1,38 @@
+{
+    "setup": {
+        "environment_import": "environment.simulation_environment_Gartank.Gartank",
+        "agent_import": "controller.MILP_based_controller_GT.MILPController",
+        "norm_wrapper_obs": false,
+        "norm_wrapper_reward": false
+    },
+    "paths": {
+        "relpath_scenarios": "/media/cheeko/6E92406092402EC1/Abhilash/github/rule-based-operation-strategy/experiments/rule-based-optimization/data",
+        "relpath_results": "results"
+    },
+    "settings": {
+        "sampling_time": 300,
+        "episode_duration": 172800,
+        "n_episodes_play": 1,
+        "n_environments": 1,
+        "plot_interval": 100,
+        "verbose": 2,
+        "seed": 1
+    },
+    "environment_specific": {
+        "scenario_time_begin": "2022-01-07 00:00",
+        "scenario_time_end": "2022-01-09 00:00",
+        "temp_start_storage": 287.65,
+        "min_temp_storage": 275.15,
+        "max_temp_storage": 287.65,
+        "V_Gaertank": 460,
+        "h_Gaertank": 22.75,
+        "ambient_file": "Ambient_Temperature_2022.csv",
+        "price_file": "day_ahead_prices_2022_with_taxes.csv",
+        "stop_at_target": true,
+        "plot_results": true
+    },
+    "agent_specific": {
+        "heat_transfer_UA_W_per_K": 84.0505,
+        "piecewise_representation": "SOS2"
+    }
+}

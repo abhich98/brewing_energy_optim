@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyomo.environ import (
@@ -25,43 +25,57 @@ from pyomo.opt import SolverStatus, TerminationCondition
 
 @dataclass(frozen=True)
 class CoolingConfig:
-    temperature_initial_k: float
-    temperature_min_k: float
-    temperature_max_k: float
-    terminal_tolerance_k: float
+    temperature_initial_K: float
+    temperature_target_K: float
+    terminal_temperature_tolerance_K: float
+    # Temperature breakpoints define model bounds and cooling-capacity interpolation.
+    temperature_breakpoints_K: list[float]
     tank_volume_m3: float
-    beer_density_kg_m3: float
-    beer_heat_capacity_j_kg_k: float
+    beer_density_kg_per_m3: float
+    beer_heat_capacity_J_per_kg_K: float
     eer: float
-    step_hours: float
-    temperature_breakpoints_k: list[float]
-    prices_eur_per_kwh: list[float]
+    step_s: float
+    prices_EUR_per_kWh: list[float]
     solver: str
+    ambient_temperatures_K: list[float] = field(default_factory=list)
+    heat_transfer_UA_W_per_K: float = 0.0
+    piecewise_representation: str = "SOS2"
 
     def __post_init__(self) -> None:
         numeric = (
-            self.temperature_initial_k, self.temperature_min_k, self.temperature_max_k,
-            self.terminal_tolerance_k, self.tank_volume_m3, self.beer_density_kg_m3,
-            self.beer_heat_capacity_j_kg_k, self.eer, self.step_hours,
-            *self.temperature_breakpoints_k, *self.prices_eur_per_kwh,
+            self.temperature_initial_K, self.temperature_target_K,
+            self.terminal_temperature_tolerance_K, *self.temperature_breakpoints_K, 
+            self.tank_volume_m3, self.beer_density_kg_per_m3,
+            self.beer_heat_capacity_J_per_kg_K, self.eer, self.step_s,
+            self.heat_transfer_UA_W_per_K,
+            *self.prices_EUR_per_kWh, *self.ambient_temperatures_K,
         )
         if not all(math.isfinite(value) for value in numeric):
             raise ValueError("All model parameters and prices must be finite.")
-        if min(self.tank_volume_m3, self.beer_density_kg_m3, self.beer_heat_capacity_j_kg_k,
-               self.eer, self.step_hours) <= 0:
+        if min(self.tank_volume_m3, self.beer_density_kg_per_m3, self.beer_heat_capacity_J_per_kg_K,
+               self.eer, self.step_s) <= 0:
             raise ValueError("Tank properties, EER, and time step must be positive.")
-        if not (self.temperature_min_k <= self.temperature_initial_k <= self.temperature_max_k):
-            raise ValueError("Initial temperature must lie within the specified bounds.")
-        if not 0 <= self.terminal_tolerance_k <= self.temperature_max_k - self.temperature_min_k:
-            raise ValueError("Terminal tolerance must fit within the temperature bounds.")
-        
-        points = self.temperature_breakpoints_k
-        if (len(points) < 2 or points[0] != self.temperature_min_k
-                or points[-1] != self.temperature_max_k
+
+        points = self.temperature_breakpoints_K
+        if (len(points) < 2 or points[0] != self.temperature_target_K
                 or any(a >= b for a, b in zip(points, points[1:]))):
-            raise ValueError("Breakpoints must increase strictly and span the temperature bounds.")
-        if not self.prices_eur_per_kwh:
+            raise ValueError("Breakpoints must increase strictly and start at the target temperature.")
+        if not self.temperature_target_K < self.temperature_initial_K <= points[-1]:
+            raise ValueError("Initial temperature must be above the target and within the breakpoint range.")
+        if not 0 <= self.terminal_temperature_tolerance_K <= points[-1] - self.temperature_target_K:
+            raise ValueError("Terminal tolerance must fit within the temperature bounds.")
+
+        if not self.prices_EUR_per_kWh:
             raise ValueError("At least one price interval is required.")
+        if self.heat_transfer_UA_W_per_K < 0:
+            raise ValueError("Heat-transfer UA must be nonnegative.")
+        if self.ambient_temperatures_K and len(self.ambient_temperatures_K) != len(self.prices_EUR_per_kWh):
+            raise ValueError("Ambient temperatures must cover every price interval.")
+        if self.heat_transfer_UA_W_per_K > 0 and not self.ambient_temperatures_K:
+            raise ValueError("Ambient temperatures are required when heat-transfer UA is nonzero.")
+
+        if self.piecewise_representation not in ("SOS2", "CC"):
+            raise ValueError("Piecewise representation must be 'SOS2' or 'CC'.")
         if not self.solver:
             raise ValueError("A solver name is required.")
 
@@ -71,11 +85,11 @@ class CoolingConfig:
             return cls(**json.load(file))
 
 
-def cooling_capacity_w(temperature: float, unit: str = "K") -> float:
+def cooling_capacity_W(temperature_K: float, unit: str = "K") -> float:
     """Calculate the cooling capacity in watts based on the parameters estimated from Fermentation tank cooling curves.
     
     Args:
-        temperature: The temperature at which to calculate the cooling capacity.
+        temperature_K: The temperature at which to calculate the cooling capacity.
         unit: The unit of the temperature, either "C" for Celsius or "K" for Kelvin.
 
     Returns:
@@ -83,68 +97,93 @@ def cooling_capacity_w(temperature: float, unit: str = "K") -> float:
     """
 
     if unit == "K":
-        temperature_c = temperature - 273.15
+        temperature_C = temperature_K - 273.15
     elif unit == "C":
-        temperature_c = temperature
+        temperature_C = temperature_K
     else:
         raise ValueError(f"Unit must be 'C' or 'K', got '{unit}'")
     
-    return 16450 * temperature_c ** 1.33 - 4603
+    return 16450 * temperature_C ** 1.33 - 4603
 
 
 def build_model(config: CoolingConfig) -> ConcreteModel:
-    """Construct an hourly binary-control MILP with no ambient heat transfer."""
+    """Construct a binary-control MILP with optional ambient heat transfer."""
     model = ConcreteModel()
-    n = len(config.prices_eur_per_kwh)
+    n = len(config.prices_EUR_per_kWh)
     model.intervals = RangeSet(0, n - 1)
     model.states = RangeSet(0, n)
+    temperature_lower_K = config.temperature_breakpoints_K[0]
+    temperature_upper_K = config.temperature_breakpoints_K[-1]
 
     # Variables
-    model.temperature = Var(
-            model.states, bounds=(config.temperature_min_k, config.temperature_max_k)
+    model.temperature_K = Var(
+            model.states, bounds=(temperature_lower_K, temperature_upper_K)
         )
-    model.on = Var(model.intervals, domain=Binary) # The final cooling schedule
-    q_min = cooling_capacity_w(config.temperature_min_k)
-    q_max = cooling_capacity_w(config.temperature_max_k)
-    model.available_cooling_capacity = Var(model.intervals, bounds=(q_min, q_max))
-    model.applied_cooling = Var(model.intervals, bounds=(0, q_max))
+    model.cooling_on = Var(model.intervals, domain=Binary)
+    minimum_cooling_capacity_W = cooling_capacity_W(temperature_lower_K)
+    maximum_cooling_capacity_W = cooling_capacity_W(temperature_upper_K)
+    model.cooling_capacity_available_W = Var(
+        model.intervals, bounds=(minimum_cooling_capacity_W, maximum_cooling_capacity_W)
+    )
+    model.cooling_power_applied_W = Var(model.intervals, bounds=(0, maximum_cooling_capacity_W))
 
     # Constraints
-    model.initial = Constraint(expr=model.temperature[0] == config.temperature_initial_k)
+    model.initial = Constraint(expr=model.temperature_K[0] == config.temperature_initial_K)
     model.terminal = Constraint(
-        expr=model.temperature[n] <= config.temperature_min_k + config.terminal_tolerance_k
+        expr=model.temperature_K[n]
+        <= config.temperature_target_K + config.terminal_temperature_tolerance_K
     )
     model.capacity_curve = Piecewise(
-        model.intervals, model.available_cooling_capacity, model.temperature,
-        pw_pts=config.temperature_breakpoints_k,
-        f_rule=lambda _model, _t, temp: cooling_capacity_w(temp),
-        pw_constr_type="EQ", 
-        pw_repn="SOS2",
+        model.intervals,
+        model.cooling_capacity_available_W,
+        model.temperature_K,
+        pw_pts=config.temperature_breakpoints_K,
+        f_rule=lambda _model, _t, temperature_K: cooling_capacity_W(temperature_K),
+        pw_constr_type="EQ",
+        pw_repn=config.piecewise_representation,
     )
     model.cooling_upper_on = Constraint(
-        model.intervals, rule=lambda m, t: m.applied_cooling[t] <= q_max * m.on[t]
+        model.intervals,
+        rule=lambda m, t: m.cooling_power_applied_W[t]
+        <= maximum_cooling_capacity_W * m.cooling_on[t],
     )
     model.cooling_lower_on = Constraint(
-        model.intervals, rule=lambda m, t: m.applied_cooling[t] >= q_min * m.on[t]
+        model.intervals,
+        rule=lambda m, t: m.cooling_power_applied_W[t]
+        >= minimum_cooling_capacity_W * m.cooling_on[t],
     )
     model.cooling_upper_capacity = Constraint(
-        model.intervals, rule=lambda m, t: m.applied_cooling[t] <= m.available_cooling_capacity[t] - q_min * (1 - m.on[t])
+        model.intervals,
+        rule=lambda m, t: m.cooling_power_applied_W[t]
+        <= m.cooling_capacity_available_W[t]
+        - minimum_cooling_capacity_W * (1 - m.cooling_on[t]),
     )
     model.cooling_lower_capacity = Constraint(
-        model.intervals, rule=lambda m, t: m.applied_cooling[t] >= m.available_cooling_capacity[t] - q_max * (1 - m.on[t])
+        model.intervals,
+        rule=lambda m, t: m.cooling_power_applied_W[t]
+        >= m.cooling_capacity_available_W[t]
+        - maximum_cooling_capacity_W * (1 - m.cooling_on[t]),
     )
-    thermal_mass = config.tank_volume_m3 * config.beer_density_kg_m3 * config.beer_heat_capacity_j_kg_k
+    thermal_mass_J_per_K = (
+        config.tank_volume_m3 * config.beer_density_kg_per_m3 * config.beer_heat_capacity_J_per_kg_K
+    )
+    ambient_temperatures_K = config.ambient_temperatures_K or [0.0] * n
     model.dynamics = Constraint(
         model.intervals,
-        rule=lambda m, t: m.temperature[t + 1] == m.temperature[t]
-        - config.step_hours * 3600 / thermal_mass * m.applied_cooling[t],
+        rule=lambda m, t: m.temperature_K[t + 1] == m.temperature_K[t]
+        + config.step_s / thermal_mass_J_per_K
+        * (config.heat_transfer_UA_W_per_K
+           * (ambient_temperatures_K[t] - m.temperature_K[t]) - m.cooling_power_applied_W[t]),
     )
 
     # Objective
     model.cost = Objective(expr=sum(
-        config.prices_eur_per_kwh[t] * model.applied_cooling[t] * config.step_hours / (1000 * config.eer)
+        config.prices_EUR_per_kWh[t]
+        * model.cooling_power_applied_W[t] * config.step_s
+        / (config.eer * 3_600_000)
         for t in model.intervals
     ), sense=pyomo_minimize)
+
     return model
 
 
@@ -168,19 +207,20 @@ def solve_model(model: ConcreteModel, solver_name: str):
 def schedule_rows(model: ConcreteModel, config: CoolingConfig) -> list[dict[str, float | int]]:
     rows = []
     for t in model.intervals:
-        cooling = pyomo_value(model.applied_cooling[t])
-        energy = cooling * config.step_hours / (1000 * config.eer)
+        cooling_power_W = pyomo_value(model.cooling_power_applied_W[t])
+        electric_energy_J = cooling_power_W * config.step_s / config.eer
+        electric_energy_kWh = electric_energy_J / 3_600_000
         rows.append({
             "interval": t,
-            "start_hour": t * config.step_hours,
-            "end_hour": (t + 1) * config.step_hours,
-            "temperature_start_k": pyomo_value(model.temperature[t]),
-            "temperature_end_k": pyomo_value(model.temperature[t + 1]),
-            "cooling_on": round(pyomo_value(model.on[t])),
-            "available_cooling_w": pyomo_value(model.available_cooling_capacity[t]),
-            "cooling_w": cooling,
-            "electric_energy_kwh": energy,
-            "price_eur_per_kwh": config.prices_eur_per_kwh[t],
-            "cost_eur": energy * config.prices_eur_per_kwh[t],
+            "start_time_s": t * config.step_s,
+            "end_time_s": (t + 1) * config.step_s,
+            "temperature_start_K": pyomo_value(model.temperature_K[t]),
+            "temperature_end_K": pyomo_value(model.temperature_K[t + 1]),
+            "cooling_on": round(pyomo_value(model.cooling_on[t])),
+            "cooling_capacity_available_W": pyomo_value(model.cooling_capacity_available_W[t]),
+            "cooling_power_W": cooling_power_W,
+            "electric_energy_J": electric_energy_J,
+            "price_EUR_per_kWh": config.prices_EUR_per_kWh[t],
+            "cost_EUR": electric_energy_kWh * config.prices_EUR_per_kWh[t],
         })
     return rows

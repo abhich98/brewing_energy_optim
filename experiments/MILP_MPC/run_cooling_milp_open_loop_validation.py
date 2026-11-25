@@ -30,7 +30,7 @@ def main() -> None:
         writer.writerows(rows)
     print(f"Schedule: {args.output}")
     print(f"Cooling intervals: {sum(int(row['cooling_on']) for row in rows)}/{len(rows)}")
-    print(f"Final temperature: {pyo.value(model.temperature[len(rows)]):.4f} K")
+    print(f"Final temperature: {pyo.value(model.temperature_K[len(rows)]):.4f} K")
     print(f"Electricity cost: {pyo.value(model.cost):.4f} EUR")
 
 
