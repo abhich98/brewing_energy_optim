@@ -75,7 +75,7 @@ where:
 | $M$ | Mass of beer | kg |
 | $c_p$ | Specific heat capacity | J/(kg K) |
 | $T$ | Beer temperature | °C |
-| $\dot Q_{\mathrm{ambient}}$ | Heat entering the tank | W |
+| $\dot Q_{\mathrm{ambient}}$ | Net heat transfer into the tank from its surroundings | W |
 | $\dot Q_{\mathrm{cool}}$ | Available cooling capacity | W |
 | $u(t)$ | Binary cooling control | — |
 
@@ -102,6 +102,50 @@ $$
 $$
 
 and investigate the effect of this assumption separately.
+
+#### Ambient heat exchange: optional extension
+
+The original [Gärtank rule-based controller](../../rule-based-operation-strategy/experiments/rule-based-optimization/controller/rule_based_controller_GT.py)
+estimates environmental heat transfer using a tank heat-transfer coefficient
+and surface area. During initial cooling, its energy-demand prediction uses
+the average of the starting and target tank temperatures, together with a
+forecast of ambient temperature:
+
+$$
+\dot Q_{\mathrm{ambient},t}^{\mathrm{legacy}}
+= U_{\mathrm{GT}} A_{\mathrm{GT}}
+\left(\widehat T_{\mathrm{ambient},t}
+- \frac{T_{\mathrm{start}}+T_{\mathrm{target}}}{2}\right)
+$$
+
+The controller converts this power to energy per price interval and adds it to
+the predicted cooling demand. In the cycle-1 reference configuration,
+$U_{\mathrm{GT}}=0.1733\ \mathrm{W/(m^2 K)}$ and
+$A_{\mathrm{GT}}=485\ \mathrm{m^2}$, so
+$U_{\mathrm{GT}}A_{\mathrm{GT}}=84.0505\ \mathrm{W/K}$.
+
+For the reduced-order model, an alternative is to use the predicted tank
+temperature at each time step rather than the fixed average:
+
+$$
+\dot Q_{\mathrm{ambient},t}
+= U_{\mathrm{GT}} A_{\mathrm{GT}}
+\left(\widehat T_{\mathrm{ambient},t}-T_t\right)
+$$
+
+The term is positive when the surroundings are warmer than the tank and
+negative when they are colder; it applies whether cooling is on or off.
+Temperatures may be expressed in °C or K as long as both use the same scale.
+$\widehat T_{\mathrm{ambient},t}$ is a forecast supplied as model input,
+not an optimisation variable.
+
+This is a proposed extension inspired by the legacy controller's prediction,
+not a verified description of the FMU's internal equations. Compare both
+variants against the FMU, including cooling-off periods. Also check for
+double-counting: the empirical cooling-capacity curve was inferred from
+measured temperature changes while environmental heat input was neglected
+during its identification, so adding a separate heat-transfer term may require
+recalibration.
 
 ### 2.2 Temperature-dependent cooling capacity
 
@@ -262,13 +306,21 @@ $$
 
 ### 4.3 Deadline constraint
 
-The target temperature must be reached by the deadline:
+The original target is 2°C. Requiring $T_{t_j^{\mathrm{deadline}}}\leq2$
+together with the 2°C lower bound requires exactly 2°C, which may be
+unattainable with discrete, hourly ON/OFF actions. For the open-loop
+feasibility validation, use a configurable terminal tolerance $\epsilon$:
 
 $$
-\boxed{ T_{t_j^{\mathrm{deadline}}}\leq2 }
+\boxed{2\leq T_{t_j^{\mathrm{deadline}}}\leq2+\epsilon}
 $$
 
-Together with the lower temperature bound, this means the terminal temperature is exactly 2°C.
+The validation uses $\epsilon=0.1^\circ\mathrm C$, so it accepts a terminal
+temperature of 2.0–2.1°C. This is a validation assumption, not evidence that
+the brewery permits the deviation or that the exact 2°C target was achieved.
+Confirm process acceptance before applying it to operational comparisons.
+The tolerance does not guarantee feasibility for every deadline or action
+granularity.
 
 The model should only apply these main-phase constraints over the interval being optimised. Subsequent cooling from 2°C towards approximately −1.5°C is outside the scope of this project.
 
@@ -447,6 +499,26 @@ $$
 \boxed{ T_{t+1} = T_t - \frac{\Delta t_s}{Mc_p}v_t }
 $$
 
+Alternatively, including the heat-exchange extension from Section 2.1:
+
+$$
+\boxed{
+T_{t+1}=T_t+\frac{\Delta t_s}{Mc_p}
+\left[
+U_{\mathrm{GT}}A_{\mathrm{GT}}
+\left(\widehat T_{\mathrm{ambient},t}-T_t\right)-v_t
+\right]
+}
+$$
+
+The two equations are alternative model variants; do not apply both.
+With fixed $U_{\mathrm{GT}}$, $A_{\mathrm{GT}}$, $M$, $c_p$ and time step,
+and ambient forecasts supplied before each solve, the added term is linear
+in $T_t$. It therefore preserves the MILP formulation. The
+temperature-dependent cooling capacity and its on/off product still require
+the piecewise-linear approximation and binary-continuous linearisation in
+Sections 6.1 and 6.2.
+
 **Cooling control**
 
 $$
@@ -468,8 +540,18 @@ $$
 **Deadline constraint**
 
 $$
-T_{t_j^{\mathrm{deadline}}}\leq2
+2\leq T_{t_j^{\mathrm{deadline}}}\leq2+\epsilon
 $$
+
+For the standalone validation, $\epsilon=0.1^\circ\mathrm C$.
+
+The open-loop validation stores all absolute tank temperatures and capacity
+curve breakpoints in kelvin; the terminal tolerance is a temperature
+difference of $0.1\ \mathrm K$ (numerically equal to $0.1^\circ\mathrm C$).
+The empirical capacity correlation is defined using Celsius, so convert a
+Kelvin state or breakpoint using $T_{\mathrm C}=T_{\mathrm K}-273.15$ before
+evaluating $\dot Q_{\mathrm{cool}}(T_{\mathrm C})$. Temperature differences in
+the thermal balance are unchanged by this absolute-scale conversion.
 
 **Cooling-capacity approximation**
 
@@ -502,11 +584,11 @@ A single MILP can optimise the complete cooling schedule for one cycle. However,
 At every control update $t$:
 
 1. Obtain the current tank temperature $T_t$.
-2. Obtain the latest electricity-price forecasts.
+2. Obtain the latest electricity-price forecasts and, if heat exchange is included, ambient-temperature forecasts.
 3. Solve the MILP over the remaining optimisation horizon.
 4. Implement only the first cooling decision $u_t$.
 5. Advance the simulation by one time step.
-6. Update the temperature and price forecasts.
+6. Update the measured temperature and forecasts.
 7. Solve the optimisation problem again.
 
 At each update, the optimisation objective becomes:
