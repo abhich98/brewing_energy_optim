@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=root / "config/cooling_milp_open_loop_validation.json")
     parser.add_argument("--output", type=Path, default=root / "results/cooling_milp/open_loop_schedule.csv")
     args = parser.parse_args()
+
     config = CoolingConfig.from_json(args.config)
     model = build_model(config)
     result = solve_model(model, config.solver)

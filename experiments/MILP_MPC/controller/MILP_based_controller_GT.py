@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from logging import getLogger
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from eta_utility import get_logger
 from eta_utility.eta_x.agents import RuleBased
 from pyomo.common.errors import ApplicationError
 from pyomo.environ import SolverFactory, value
@@ -17,7 +17,7 @@ from stable_baselines3.common.vec_env import VecEnv
 
 from model.cooling_milp import CoolingConfig, build_model, solve_model
 
-log = getLogger(__name__)
+log = get_logger().getChild(__name__)
 
 
 class MILPController(RuleBased):

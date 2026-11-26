@@ -11,7 +11,6 @@
     },
     "settings": {
         "sampling_time": 300,
-        "episode_duration": 172800,
         "n_episodes_play": 1,
         "n_environments": 1,
         "plot_interval": 100,

@@ -4,17 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from logging import getLogger
 from typing import Any, Callable, Mapping
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from eta_utility import timeseries
+from eta_utility import get_logger, timeseries
 from eta_utility.eta_x import ConfigOptRun
 from eta_utility.eta_x.envs import BaseEnvSim, StateConfig, StateVar
 
-log = getLogger(__name__)
+log = get_logger().getChild(__name__)
 
 
 class Gartank(BaseEnvSim):
@@ -51,7 +50,10 @@ class Gartank(BaseEnvSim):
             callback,
             scenario_time_begin=scenario_time_begin,
             scenario_time_end=scenario_time_end,
-            episode_duration=episode_duration,
+            episode_duration=(
+                datetime.strptime(scenario_time_end, "%Y-%m-%d %H:%M") 
+                - datetime.strptime(scenario_time_begin, "%Y-%m-%d %H:%M")
+                ).total_seconds(),
             sampling_time=sampling_time,
             model_parameters={
                 "T_sto_start": temp_start_storage,

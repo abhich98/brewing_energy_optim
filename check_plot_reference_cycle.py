@@ -14,6 +14,7 @@ print(new_df.head())
 
 # Assert that the Fermentation tank temperature series are equal within a tolerance (in Kelvin)
 pd.testing.assert_series_equal(old_df['storage_temperature'], new_df['storage_temperature_K'], atol=1e-3, check_names=False)
+print("Storage temperature comparison passed.")
 
 plt.figure(figsize=(10, 6))
 
