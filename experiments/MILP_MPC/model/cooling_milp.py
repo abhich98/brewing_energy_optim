@@ -11,6 +11,7 @@ from pyomo.environ import (
     Binary,
     ConcreteModel,
     Constraint,
+    Expression,
     Objective,
     Piecewise,
     RangeSet,
@@ -62,8 +63,10 @@ class CoolingConfig:
             raise ValueError("Breakpoints must increase strictly and start at the target temperature.")
         if not self.temperature_target_K < self.temperature_initial_K <= points[-1]:
             raise ValueError("Initial temperature must be above the target and within the breakpoint range.")
-        if not 0 <= self.terminal_temperature_tolerance_K <= points[-1] - self.temperature_target_K:
-            raise ValueError("Terminal tolerance must fit within the temperature bounds.")
+        if points[0] < 273.15 or cooling_capacity_W(points[0]) < 0:
+            raise ValueError("The breakpoint range must have nonnegative cooling capacity.")
+        if self.terminal_temperature_tolerance_K < 0:
+            raise ValueError("Terminal tolerance must be nonnegative.")
 
         if not self.prices_EUR_per_kWh:
             raise ValueError("At least one price interval is required.")
@@ -106,6 +109,7 @@ def cooling_capacity_W(temperature_K: float, unit: str = "K") -> float:
     return 16450 * temperature_C ** 1.33 - 4603
 
 
+
 def build_model(config: CoolingConfig) -> ConcreteModel:
     """Construct a binary-control MILP with optional ambient heat transfer."""
     model = ConcreteModel()
@@ -120,12 +124,20 @@ def build_model(config: CoolingConfig) -> ConcreteModel:
             model.states, bounds=(temperature_lower_K, temperature_upper_K)
         )
     model.cooling_on = Var(model.intervals, domain=Binary)
-    minimum_cooling_capacity_W = cooling_capacity_W(temperature_lower_K)
-    maximum_cooling_capacity_W = cooling_capacity_W(temperature_upper_K)
-    model.cooling_capacity_available_W = Var(
-        model.intervals, bounds=(minimum_cooling_capacity_W, maximum_cooling_capacity_W)
+    minimum_cooling_capacity_kW = cooling_capacity_W(temperature_lower_K) / 1000
+    maximum_cooling_capacity_kW = cooling_capacity_W(temperature_upper_K) / 1000
+    model.cooling_capacity_available_kW = Var(
+        model.intervals, bounds=(minimum_cooling_capacity_kW, maximum_cooling_capacity_kW)
     )
-    model.cooling_power_applied_W = Var(model.intervals, bounds=(0, maximum_cooling_capacity_W))
+    model.cooling_power_applied_kW = Var(
+        model.intervals, bounds=(0, maximum_cooling_capacity_kW)
+    )
+    model.cooling_capacity_available_W = Expression(
+        model.intervals, rule=lambda m, t: 1000 * m.cooling_capacity_available_kW[t]
+    )
+    model.cooling_power_applied_W = Expression(
+        model.intervals, rule=lambda m, t: 1000 * m.cooling_power_applied_kW[t]
+    )
 
     # Constraints
     model.initial = Constraint(expr=model.temperature_K[0] == config.temperature_initial_K)
@@ -135,34 +147,34 @@ def build_model(config: CoolingConfig) -> ConcreteModel:
     )
     model.capacity_curve = Piecewise(
         model.intervals,
-        model.cooling_capacity_available_W,
+        model.cooling_capacity_available_kW,
         model.temperature_K,
         pw_pts=config.temperature_breakpoints_K,
-        f_rule=lambda _model, _t, temperature_K: cooling_capacity_W(temperature_K),
+        f_rule=lambda _model, _t, temperature_K: cooling_capacity_W(temperature_K) / 1000,
         pw_constr_type="EQ",
         pw_repn=config.piecewise_representation,
     )
     model.cooling_upper_on = Constraint(
         model.intervals,
-        rule=lambda m, t: m.cooling_power_applied_W[t]
-        <= maximum_cooling_capacity_W * m.cooling_on[t],
+        rule=lambda m, t: m.cooling_power_applied_kW[t]
+        <= maximum_cooling_capacity_kW * m.cooling_on[t],
     )
     model.cooling_lower_on = Constraint(
         model.intervals,
-        rule=lambda m, t: m.cooling_power_applied_W[t]
-        >= minimum_cooling_capacity_W * m.cooling_on[t],
+        rule=lambda m, t: m.cooling_power_applied_kW[t]
+        >= minimum_cooling_capacity_kW * m.cooling_on[t],
     )
     model.cooling_upper_capacity = Constraint(
         model.intervals,
-        rule=lambda m, t: m.cooling_power_applied_W[t]
-        <= m.cooling_capacity_available_W[t]
-        - minimum_cooling_capacity_W * (1 - m.cooling_on[t]),
+        rule=lambda m, t: m.cooling_power_applied_kW[t]
+        <= m.cooling_capacity_available_kW[t]
+        - minimum_cooling_capacity_kW * (1 - m.cooling_on[t]),
     )
     model.cooling_lower_capacity = Constraint(
         model.intervals,
-        rule=lambda m, t: m.cooling_power_applied_W[t]
-        >= m.cooling_capacity_available_W[t]
-        - maximum_cooling_capacity_W * (1 - m.cooling_on[t]),
+        rule=lambda m, t: m.cooling_power_applied_kW[t]
+        >= m.cooling_capacity_available_kW[t]
+        - maximum_cooling_capacity_kW * (1 - m.cooling_on[t]),
     )
     thermal_mass_J_per_K = (
         config.tank_volume_m3 * config.beer_density_kg_per_m3 * config.beer_heat_capacity_J_per_kg_K
@@ -171,27 +183,45 @@ def build_model(config: CoolingConfig) -> ConcreteModel:
     model.dynamics = Constraint(
         model.intervals,
         rule=lambda m, t: m.temperature_K[t + 1] == m.temperature_K[t]
-        + config.step_s / thermal_mass_J_per_K
+        + config.step_s
         * (config.heat_transfer_UA_W_per_K
-           * (ambient_temperatures_K[t] - m.temperature_K[t]) - m.cooling_power_applied_W[t]),
+           * (ambient_temperatures_K[t] - m.temperature_K[t])
+           - 1000 * m.cooling_power_applied_kW[t])
+            / thermal_mass_J_per_K,
     )
 
     # Objective
     model.cost = Objective(expr=sum(
         config.prices_EUR_per_kWh[t]
-        * model.cooling_power_applied_W[t] * config.step_s
-        / (config.eer * 3_600_000)
+        * model.cooling_power_applied_kW[t] * config.step_s
+        / (config.eer * 3600)
         for t in model.intervals
     ), sense=pyomo_minimize)
 
     return model
 
 
-def solve_model(model: ConcreteModel, solver_name: str):
+def solve_model(
+    model: ConcreteModel,
+    solver_name: str,
+    *,
+    time_limit_s: float | None = None,
+):
+    """Solve the MILP and load only a solution proved optimal by the solver."""
     solver = SolverFactory(solver_name)
     if not solver.available(exception_flag=False):
         raise RuntimeError(f"MILP solver {solver_name!r} is not available.")
-    result = solver.solve(model, load_solutions=False)
+    if time_limit_s is not None and (not math.isfinite(time_limit_s) or time_limit_s <= 0):
+        raise ValueError("Solver time limit must be finite and positive.")
+    solve_options = {"timelimit": time_limit_s} if time_limit_s is not None else {}
+
+    try:
+        result = solver.solve(model, load_solutions=False, **solve_options)
+    except AttributeError as exc:
+        if solver_name != "scip" or "primal_bound" not in str(exc):
+            raise
+        raise RuntimeError("SCIP's solution status could not be parsed by Pyomo.") from exc
+
     if result.solver.termination_condition == TerminationCondition.infeasible:
         return result
     if (result.solver.status != SolverStatus.ok
@@ -200,6 +230,7 @@ def solve_model(model: ConcreteModel, solver_name: str):
             f"Solver did not prove optimality: status={result.solver.status}, "
             f"termination={result.solver.termination_condition}."
         )
+
     model.solutions.load_from(result)
     return result
 
