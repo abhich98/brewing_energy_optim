@@ -18,8 +18,8 @@
         "seed": 1
     },
     "environment_specific": {
-        "scenario_time_begin": "2022-01-07 00:00",
-        "scenario_time_end": "2022-01-09 00:00",
+        "scenario_time_begin": "2022-01-06 23:15",
+        "scenario_time_end": "2022-01-09 23:15",
         "temp_start_storage": 287.65,
         "min_temp_storage": 275.15,
         "max_temp_storage": 287.65,
@@ -31,7 +31,21 @@
         "plot_results": true
     },
     "agent_specific": {
-        "heat_transfer_UA_W_per_K": 84.0505,
-        "piecewise_representation": "SOS2"
+        "max_mpc_step_time": 3600,
+        "target_temperature_offset_K": -0.1,
+        "reoptimization_interval_steps": 5,
+        "temperature_deviation_threshold_K": 0.2,
+        "solver_time_limit_s": 300,
+        "cooling_milp": {
+            "terminal_temperature_tolerance_K": 0.1,
+            "max_temperature_breakpoints_res_K": 0.5,
+            "tank_volume_m3": 460,
+            "beer_density_kg_per_m3": 1040,
+            "beer_heat_capacity_J_per_kg_K": 3770,
+            "eer": 4.35,
+            "solver": "scip",
+            "heat_transfer_UA_W_per_K": 84.0505,
+            "piecewise_representation": "SOS2"
+        }
     }
 }

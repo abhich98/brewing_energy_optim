@@ -35,9 +35,9 @@ class CoolingConfig:
     beer_density_kg_per_m3: float
     beer_heat_capacity_J_per_kg_K: float
     eer: float
-    step_s: float
     prices_EUR_per_kWh: list[float]
     solver: str
+    interval_durations_s: list[float] = field(default_factory=list)
     ambient_temperatures_K: list[float] = field(default_factory=list)
     heat_transfer_UA_W_per_K: float = 0.0
     piecewise_representation: str = "SOS2"
@@ -47,15 +47,16 @@ class CoolingConfig:
             self.temperature_initial_K, self.temperature_target_K,
             self.terminal_temperature_tolerance_K, *self.temperature_breakpoints_K, 
             self.tank_volume_m3, self.beer_density_kg_per_m3,
-            self.beer_heat_capacity_J_per_kg_K, self.eer, self.step_s,
+            self.beer_heat_capacity_J_per_kg_K, self.eer,
             self.heat_transfer_UA_W_per_K,
-            *self.prices_EUR_per_kWh, *self.ambient_temperatures_K,
+            *self.prices_EUR_per_kWh, *self.interval_durations_s,
+            *self.ambient_temperatures_K,
         )
         if not all(math.isfinite(value) for value in numeric):
             raise ValueError("All model parameters and prices must be finite.")
         if min(self.tank_volume_m3, self.beer_density_kg_per_m3, self.beer_heat_capacity_J_per_kg_K,
-               self.eer, self.step_s) <= 0:
-            raise ValueError("Tank properties, EER, and time step must be positive.")
+               self.eer) <= 0:
+            raise ValueError("Tank properties, and EER must be positive.")
 
         points = self.temperature_breakpoints_K
         if (len(points) < 2 or points[0] != self.temperature_target_K
@@ -70,6 +71,13 @@ class CoolingConfig:
 
         if not self.prices_EUR_per_kWh:
             raise ValueError("At least one price interval is required.")
+        if self.interval_durations_s and (
+            len(self.interval_durations_s) != len(self.prices_EUR_per_kWh)
+            or any(duration_s <= 0 for duration_s in self.interval_durations_s)
+        ):
+            raise ValueError(
+                "Interval durations must be positive and match the price intervals."
+            )
         if self.heat_transfer_UA_W_per_K < 0:
             raise ValueError("Heat-transfer UA must be nonnegative.")
         if self.ambient_temperatures_K and len(self.ambient_temperatures_K) != len(self.prices_EUR_per_kWh):
@@ -183,7 +191,7 @@ def build_model(config: CoolingConfig) -> ConcreteModel:
     model.dynamics = Constraint(
         model.intervals,
         rule=lambda m, t: m.temperature_K[t + 1] == m.temperature_K[t]
-        + config.step_s
+        + config.interval_durations_s[t]
         * (config.heat_transfer_UA_W_per_K
            * (ambient_temperatures_K[t] - m.temperature_K[t])
            - 1000 * m.cooling_power_applied_kW[t])
@@ -193,7 +201,7 @@ def build_model(config: CoolingConfig) -> ConcreteModel:
     # Objective
     model.cost = Objective(expr=sum(
         config.prices_EUR_per_kWh[t]
-        * model.cooling_power_applied_kW[t] * config.step_s
+        * model.cooling_power_applied_kW[t] * config.interval_durations_s[t]
         / (config.eer * 3600)
         for t in model.intervals
     ), sense=pyomo_minimize)
@@ -226,9 +234,18 @@ def solve_model(
         return result
     if (result.solver.status != SolverStatus.ok
             or result.solver.termination_condition != TerminationCondition.optimal):
+        gap = getattr(result.solver, "gap", None)
+        if gap is None:
+            gap_detail = ""
+        elif solver_name.lower() in {"scip", "scipampl"}:
+            gap_detail = f"{gap}%"
+        else:
+            gap_detail = f"{gap}"
+
         raise RuntimeError(
             f"Solver did not prove optimality: status={result.solver.status}, "
-            f"termination={result.solver.termination_condition}."
+            f"termination={result.solver.termination_condition}, "
+            f"gap={gap_detail}."
         )
 
     model.solutions.load_from(result)
@@ -236,15 +253,20 @@ def solve_model(
 
 
 def schedule_rows(model: ConcreteModel, config: CoolingConfig) -> list[dict[str, float | int]]:
+    """Serialize a solved schedule with cumulative interval offsets."""
+
     rows = []
+    start_time_s = 0.0
     for t in model.intervals:
         cooling_power_W = pyomo_value(model.cooling_power_applied_W[t])
-        electric_energy_J = cooling_power_W * config.step_s / config.eer
+        duration_s = config.interval_durations_s[t]
+        electric_energy_J = cooling_power_W * duration_s / config.eer
         electric_energy_kWh = electric_energy_J / 3_600_000
         rows.append({
             "interval": t,
-            "start_time_s": t * config.step_s,
-            "end_time_s": (t + 1) * config.step_s,
+            "start_time_s": start_time_s,
+            "end_time_s": start_time_s + duration_s,
+            "duration_s": duration_s,
             "temperature_start_K": pyomo_value(model.temperature_K[t]),
             "temperature_end_K": pyomo_value(model.temperature_K[t + 1]),
             "cooling_on": round(pyomo_value(model.cooling_on[t])),
@@ -254,4 +276,6 @@ def schedule_rows(model: ConcreteModel, config: CoolingConfig) -> list[dict[str,
             "price_EUR_per_kWh": config.prices_EUR_per_kWh[t],
             "cost_EUR": electric_energy_kWh * config.prices_EUR_per_kWh[t],
         })
+        start_time_s += duration_s
+
     return rows

@@ -12,7 +12,7 @@ number of prices in the configuration (below are the standard values for that re
 
 | Parameter | Meaning | Configured value |
 |---|---|---:|
-| $\Delta t_s$ | Interval duration | 3600 s |
+| $\Delta t_t$ | Duration of interval $t$ | Configured per interval; 3600 s for uniform open-loop cases |
 | $T_0$ | Initial tank temperature | 287.65 K (14.5 °C) |
 | $T_{\mathrm{target}}$ | Target tank temperature, also the model's lower bound | 275.15 K (2 °C) |
 | $T_{\max}$ | Upper model bound, derived from the last capacity breakpoint | 287.65 K (14.5 °C) |
@@ -28,9 +28,14 @@ number of prices in the configuration (below are the standard values for that re
 The thermal mass used in the dynamics is $M c_p=V\rho c_p$. Absolute
 temperatures and piecewise-linear breakpoints are represented in kelvin.
 Temperature differences have the same numerical value in kelvin and Celsius.
+
+_For better numerical scaling, the solver's cooling-power variables are in kW;_
+the model exposes watt-valued expressions and the output remains in W.
 The corresponding configuration fields use SI-cased suffixes, for example
-`temperature_initial_K`, `beer_heat_capacity_J_per_kg_K`, `step_s`,
-`ambient_temperatures_K`, and `heat_transfer_UA_W_per_K`.
+`temperature_initial_K`, `beer_heat_capacity_J_per_kg_K`,
+`interval_durations_s`, `ambient_temperatures_K`, and
+`heat_transfer_UA_W_per_K`. `step_s` remains the uniform-interval duration
+for configurations that do not provide `interval_durations_s`.
 
 ## Decision variables
 
@@ -68,7 +73,7 @@ Minimize the total electricity cost over the complete horizon:
 
 $$
 \min \quad \sum_{t=0}^{N-1}
-p_t\,\frac{v_t\Delta t_s}{3.6\times10^6\,\mathrm{EER}}
+p_t\,\frac{v_t\Delta t_t}{3.6\times10^6\,\mathrm{EER}}
 $$
 
 Here, $v_t\Delta t_s/\mathrm{EER}$ is electrical energy in joules; dividing
@@ -130,7 +135,7 @@ For every interval:
 
 $$
 T_{t+1}
-=T_t+\frac{\Delta t_s}{V\rho c_p}
+=T_t+\frac{\Delta t_t}{V\rho c_p}
 \left[UA(T_{\mathrm{amb},t}-T_t)-v_t\right],
 \qquad t=0,\ldots,N-1.
 $$
@@ -146,8 +151,9 @@ every interval. The model uses Kelvin states and ambient temperatures.
   inside the model. The same model can be used for an open-loop schedule or
   repeatedly by the deterministic MPC controller.
 - Configuration validation checks finite numeric values, positive tank
-  properties/EER/time step, initial temperature above the target and no higher
-  than the last breakpoint, a nonnegative terminal tolerance within that range,
+  properties/EER/time step, interval durations matching price intervals,
+  initial temperature above the target and no higher
+  than the last breakpoint, a nonnegative terminal tolerance,
   strictly increasing breakpoints starting at the target, at least one price,
   and a nonempty solver name.
 - The current configured solver is SCIP. The implementation accepts any
@@ -157,23 +163,58 @@ every interval. The model uses Kelvin states and ambient temperatures.
 ## Deterministic FMU integration
 
 Run `python experiments/MILP_MPC/run_deterministic_mpc.py` from the repository
-root. The ETAx controller re-solves hourly using the observed FMU temperature,
-holds the first action for five-minute steps, and stops at the observed target
-or deadline. It uses historical prices as **perfect foresight**, not a
-deployable forecast. For this integration, it holds the current measured
-ambient temperature constant across each horizon and refreshes it at each
-solve; `UA=84.0505 W/K` uses Adrian's configured values.
-If the SOS2 solver process fails, the controller reports the failure and
-retries using the equivalent CC formulation; SCIP encountered a numerical
-error on the final-hour SOS2 problem in this experiment. If the retry does not
-produce an accepted solution, the controller falls back to cooling.
+root.
 
-The initial and final times are clock-hour aligned. Each hourly model price is
-the average of the twelve five-minute interval-end prices, matching the
-environment's cost-reporting convention when model power is constant over the
-hour. The existing model's minimum and target are both 275.15 K, and its
-0.05 K terminal tolerance remains in place for this integration; this is not
-the separate physical-minimum and strict-target formulation in the MPC plan.
-Infeasible or non-optimal solves fall back to cooling; an unavailable solver
-stops the run. The reduced model and the FMU need not predict identical
-trajectories. The environment saves a trajectory CSV and an episode plot.
+- The FMU is checked every five minutes and stops when the measured temperature
+  reaches the target or the simulation deadline.
+- At hour boundaries, the controller reuses the latest proven-optimal plan. It
+  re-optimizes after `reoptimization_interval_hours` (2 hours), or sooner if
+  the measured temperature differs from the plan by more than
+  `temperature_deviation_threshold_K` (0.2 K). Reusing a plan after a deviation
+  is an approximation; it may no longer be optimal for the observed state.
+- If a solve is infeasible, times out, or cannot prove optimality, cooling
+  fallback is logged and a new attempt is made at the configured interval. An
+  SOS2 solver failure is retried using the equivalent CC formulation within
+  the remaining `solver_time_limit_s` (300 seconds). No three-day solve is
+  guaranteed to prove optimality within this limit.
+- The model uses historical prices as **perfect foresight**, not a deployable
+  forecast. It holds measured ambient temperature constant across each horizon
+  and refreshes it at each solve. The heat-transfer coefficient is
+  `UA=84.0505 W/K`, matching Adrian's configured values.
+- Simulation start and end times may fall within a clock hour, but must align
+  to the FMU sampling grid. The controller splits its optimization horizon at
+  clock-hour boundaries, resulting in a partial first interval when the run
+  starts off-hour and a partial final interval when its deadline is off-hour.
+  It averages the environment's five-minute interval-end prices separately
+  over each model interval, preserving the environment's cost-reporting
+  convention.
+- Controller MILP settings are under `agent_specific.cooling_milp` in
+  `deterministic_mpc.json`; the open-loop validation JSON is not used. The FMU
+  stopping target is `environment_specific.min_temp_storage`; the MILP target
+  is adjusted by `target_temperature_offset_K`. The configured -0.1 K offset
+  and 0.1 K terminal tolerance place the MILP terminal upper bound at the FMU
+  target, but do not guarantee the FMU reaches it by the deadline.
+- Breakpoints span the MILP target to the observed temperature. If ambient is
+  warmer, the upper endpoint extends toward ambient, up to the environment's
+  maximum temperature. Adjacent points are no farther apart than
+  `max_temperature_breakpoints_res_K`. A MILP target below 2 °C extrapolates the
+  cooling-capacity correlation beyond its documented range and raises a
+  warning. Terminal tolerance is a model assumption, not the separate
+  physical-minimum and strict-target formulation in the MPC plan.
+- The reduced model and FMU may predict different trajectories. The
+  environment saves a trajectory CSV and an episode plot.
+
+**Some insights:**
+ - **−1.0 K, two days:** the tested MILP was infeasible. **Three days:** a feasible model schedule exists, but the solver didn’t find one within the 90-second test.
+  - **−0.1 K, three days:** a feasible schedule exists, and the FMU run reached its target. The **initial** solve found no solution within 60 seconds; I did **not** test this exact case for 300 seconds. Later, shorter-horizon solves did prove optimal.
+
+Yes, computational complexity is a likely reason for the slow solves: a three-day horizon has 72 hourly on/off decisions, coupled temperature dynamics, piecewise cooling capacity, and a narrow terminal-temperature band. Finding a feasible schedule and *proving it is cheapest* are different tasks. These results don’t establish that optimality is impossible—only that it wasn’t reached within the tested limits.
+
+**Future work:**
+  - Adding an optimality tolerance to allow near-optimal solutions to be accepted. Currently, because of the complexity of the problem, the solver is not able to always prove strict optimality within the time limit (~200-300 seconds).
+
+**The stochastic approach is still conceptually useful, but a 50-scenario MILP is not a good next step with the current formulation.**
+
+The deterministic model already struggled to find a feasible solution for the initial three-day horizon. With 50 scenarios, much of the later-horizon model—including scenario-specific temperatures and cooling decisions—would be replicated. That would likely make both finding feasibility and proving near-optimality substantially harder.
+
+I would first make the **single-scenario model reliably produce feasible solutions within an acceptable time**, then test a small number of scenarios and scale gradually. A practical optimality gap and time limit may help, but only after the solver can find a feasible incumbent. Based on the investigation so far, we **cannot predict** whether 50 scenarios would solve successfully.
