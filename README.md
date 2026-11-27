@@ -1,3 +1,46 @@
+# Brewery Cooling Optimization
+
+This project is building a **model-predictive control** (MPC) system for scheduling
+cooling in an industrial brewery fermentation tank. The aim is to coordinate
+the tank’s thermal behavior with electricity prices while respecting a
+production deadline. The Gärtank FMU is used as the simulated plant; a separate
+Pyomo model predicts temperature changes and chooses whether cooling should be
+on or off.
+
+## What is implemented
+
+The current deterministic prototype connects the FMU to an ETAx controller and
+a Pyomo mixed-integer linear program (MILP). The controller receives FMU
+measurements at five-minute intervals, plans over hourly electricity-price
+periods, and applies the selected cooling action to the simulator. The model
+includes an empirical, piecewise-linear cooling-capacity curve and optional
+linear heat exchange with ambient air. It can split its horizon into
+variable-duration intervals, so a simulation may start or finish between
+clock hours while remaining aligned to the FMU sampling grid.
+
+The current price input is historical data treated as perfect foresight; a
+realistic price forecast is not yet integrated. Episodes produce trajectory
+data, plots, and logs. Focused tests cover the optimization and controller
+behavior, but long horizons remain computationally challenging: a solve that
+does not prove optimality is not currently accepted as a usable plan.
+
+## What is planned
+
+The next major step is stochastic MPC. The MILP will represent uncertain
+electricity prices with weighted future scenarios, share near-term actions
+across scenarios, and account for deadline progress through hard intermediate
+temperature requirements. XGBoost price forecasting is planned, with
+chronological training and validation and models updated through offline
+snapshots during the 2025 evaluation. The MPC-facing forecast should provide
+complete, timestamp-aligned price trajectories and scenario probabilities;
+the method for generating and calibrating those scenarios remains under
+research. Weather estimates must use only information available at forecast
+time, and the controller will continue to use measured FMU temperatures as
+feedback. Solver performance, acceptable optimality gaps, and scenario counts
+also need evaluation before the full stochastic workflow is considered ready.
+
+![Conceptual brewery cooling MPC workflow](docs/mermaid-plan-diagram.png)
+
 On Linux x86-64, `uv` installs the CPU build of PyTorch. The project pins `marshmallow` and `polars` to versions compatible with the weather dependencies used by the current `eta_utility` installation.
 
 The bundled FMU includes a Linux binary as well as a Windows binary.
@@ -17,4 +60,4 @@ The bundled FMU includes a Linux binary as well as a Windows binary.
     - Holds that action between solves, unless the target is reached.
     - So the scheduling decision is optimization-based; the surrounding logic includes rules for timing, stopping and fallback (MILPController).
 
-- Could we use `MathSolver` instead? Yes, ETAx provides a Pyomo-oriented MathSolver. I chose RuleBased because the current MathSolver expects its model from the environment, solves on every `predict()` call, and exits on a non-optimal solve. Our integration instead needs hourly solves, five-minute FMU steps and an explicit fallback. It’s a practical choice, not a requirement. I may consider adapting MathSolver in the future if needed.
+- I could use `MathSolver`, a Pyomo-oriented MathSolver. But, I chose RuleBased because the current MathSolver expects its model from the environment, solves on every `predict()` call, and exits on a non-optimal solve. Our integration instead needs hourly solves, five-minute FMU steps and an explicit fallback. It’s a practical choice, not a requirement. I may consider adapting MathSolver in the future if needed.
